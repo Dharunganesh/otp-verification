@@ -106,5 +106,5 @@ def get_users():
         return {"success": True, "data": users}
 
     except Exception as e:
-        print("ERROR:", e)
-        raise HTTPException(status_code=500, detail="Database error")
+    print("REAL ERROR:", e)
+    raise HTTPException(status_code=500, detail=str(e))
