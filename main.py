@@ -1,104 +1,96 @@
-import os
-import requests
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+import psycopg2
+import os
 from dotenv import load_dotenv
-from requests.auth import HTTPBasicAuth
 
-# Load env
 load_dotenv()
 
 app = FastAPI()
 
-# CORS (allow your React app)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # change to your frontend URL in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# 🔹 Database connection
+conn = psycopg2.connect(os.getenv("DATABASE_URL"))
 
-# Twilio credentials
-ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-SERVICE_SID = os.getenv("TWILIO_SERVICE_SID")
+# 🔹 Request model
+class User(BaseModel):
+    name: str
+    dob: str
+    gender: str
+    block: str
+    phone_number: str
+    will_vote: bool
+    wont_accept_bribe: bool
 
-# Request models
-class PhoneRequest(BaseModel):
-    phone: str
 
-class VerifyRequest(BaseModel):
-    phone: str
-    code: str
-
-# 🔹 Send OTP
-@app.post("/send-otp")
-def send_otp(data: PhoneRequest):
+# ✅ 1️⃣ Add / Update user (UPSERT)
+@app.post("/add-user")
+def add_user(user: User):
     try:
-        url = f"https://verify.twilio.com/v2/Services/{SERVICE_SID}/Verifications"
+        cursor = conn.cursor()
 
-        payload = {
-            "To": data.phone,
-            "Channel": "sms"
-        }
-
-        response = requests.post(
-            url,
-            data=payload,
-            auth=HTTPBasicAuth(ACCOUNT_SID, AUTH_TOKEN)
+        query = """
+        INSERT INTO voters (
+            name, dob, gender, block,
+            phone_number, will_vote, wont_accept_bribe
         )
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (phone_number)
+        DO UPDATE SET
+            name = EXCLUDED.name,
+            dob = EXCLUDED.dob,
+            gender = EXCLUDED.gender,
+            block = EXCLUDED.block,
+            will_vote = EXCLUDED.will_vote,
+            wont_accept_bribe = EXCLUDED.wont_accept_bribe;
+        """
 
-        return {
-            "success": True,
-            "message": "OTP sent",
-            "twilio_response": response.json()
-        }
+        cursor.execute(query, (
+            user.name,
+            user.dob,
+            user.gender,
+            user.block,
+            user.phone_number,
+            user.will_vote,
+            user.wont_accept_bribe
+        ))
+
+        conn.commit()
+        cursor.close()
+
+        return {"success": True, "message": "User saved successfully"}
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        print(e)
+        raise HTTPException(status_code=500, detail="Database error")
 
 
-# 🔹 Verify OTP
-@app.post("/verify-otp")
-def verify_otp(data: VerifyRequest):
+# ✅ 2️⃣ Get all users
+@app.get("/get-users")
+def get_users():
     try:
-        url = f"https://verify.twilio.com/v2/Services/{SERVICE_SID}/VerificationCheck"
+        cursor = conn.cursor()
 
-        payload = {
-            "To": data.phone,
-            "Code": data.code
-        }
+        cursor.execute("SELECT * FROM voters ORDER BY created_at DESC")
+        rows = cursor.fetchall()
 
-        response = requests.post(
-            url,
-            data=payload,
-            auth=HTTPBasicAuth(ACCOUNT_SID, AUTH_TOKEN)
-        )
+        users = []
+        for row in rows:
+            users.append({
+                "id": row[0],
+                "name": row[1],
+                "dob": str(row[2]),
+                "gender": row[3],
+                "block": row[4],
+                "phone_number": row[5],
+                "is_verified": row[6],
+                "will_vote": row[7],
+                "wont_accept_bribe": row[8],
+                "created_at": str(row[9])
+            })
 
-        result = response.json()
-
-        if result.get("status") == "approved":
-            return {
-                "success": True,
-                "message": "OTP verified"
-            }
-        else:
-            return {
-                "success": False,
-                "message": "Invalid OTP"
-            }
+        cursor.close()
+        return {"success": True, "data": users}
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
-
-
-# 🔹 Run server (for local)
-# command: uvicorn main:app --reload
+        print(e)
+        raise HTTPException(status_code=500, detail="Database error")
