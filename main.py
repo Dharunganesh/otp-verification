@@ -8,21 +8,23 @@ load_dotenv()
 
 app = FastAPI()
 
-# 🔹 Database connection
+# 🔹 Database connection (Neon / PostgreSQL)
 conn = psycopg2.connect(os.getenv("DATABASE_URL"))
 
-# 🔹 Request model
+
+# 🔹 Request Model
 class User(BaseModel):
     name: str
     dob: str
     gender: str
     block: str
+    town: str   # ✅ NEW FIELD
     phone_number: str
     will_vote: bool
     wont_accept_bribe: bool
 
 
-# ✅ 1️⃣ Add / Update user (UPSERT)
+# ✅ 1️⃣ Add / Update User (UPSERT)
 @app.post("/add-user")
 def add_user(user: User):
     try:
@@ -30,16 +32,17 @@ def add_user(user: User):
 
         query = """
         INSERT INTO voters (
-            name, dob, gender, block,
+            name, dob, gender, block, town,
             phone_number, will_vote, wont_accept_bribe
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (phone_number)
         DO UPDATE SET
             name = EXCLUDED.name,
             dob = EXCLUDED.dob,
             gender = EXCLUDED.gender,
             block = EXCLUDED.block,
+            town = EXCLUDED.town,
             will_vote = EXCLUDED.will_vote,
             wont_accept_bribe = EXCLUDED.wont_accept_bribe;
         """
@@ -49,6 +52,7 @@ def add_user(user: User):
             user.dob,
             user.gender,
             user.block,
+            user.town,   # ✅ NEW
             user.phone_number,
             user.will_vote,
             user.wont_accept_bribe
@@ -60,17 +64,26 @@ def add_user(user: User):
         return {"success": True, "message": "User saved successfully"}
 
     except Exception as e:
-        print(e)
+        print("ERROR:", e)
         raise HTTPException(status_code=500, detail="Database error")
 
 
-# ✅ 2️⃣ Get all users
+# ✅ 2️⃣ Get All Users
 @app.get("/get-users")
 def get_users():
     try:
         cursor = conn.cursor()
 
-        cursor.execute("SELECT * FROM voters ORDER BY created_at DESC")
+        query = """
+        SELECT 
+            id, name, dob, gender, block, town,
+            phone_number, is_verified,
+            will_vote, wont_accept_bribe, created_at
+        FROM voters
+        ORDER BY created_at DESC
+        """
+
+        cursor.execute(query)
         rows = cursor.fetchall()
 
         users = []
@@ -81,16 +94,17 @@ def get_users():
                 "dob": str(row[2]),
                 "gender": row[3],
                 "block": row[4],
-                "phone_number": row[5],
-                "is_verified": row[6],
-                "will_vote": row[7],
-                "wont_accept_bribe": row[8],
-                "created_at": str(row[9])
+                "town": row[5],   # ✅ NEW
+                "phone_number": row[6],
+                "is_verified": row[7],
+                "will_vote": row[8],
+                "wont_accept_bribe": row[9],
+                "created_at": str(row[10])
             })
 
         cursor.close()
         return {"success": True, "data": users}
 
     except Exception as e:
-        print(e)
+        print("ERROR:", e)
         raise HTTPException(status_code=500, detail="Database error")
