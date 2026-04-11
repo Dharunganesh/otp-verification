@@ -7,40 +7,54 @@ const cors = require("cors");
 
 const app = express();
 
-// Middleware
-app.use(express.json());
+/* ===================== MIDDLEWARE ===================== */
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
 
 app.use(
   cors({
     origin: process.env.FRONTEND_URL || "*",
+    methods: ["GET", "POST", "OPTIONS"],
   })
 );
 
-// Health check
+/* ===================== HEALTH ===================== */
 app.get("/", (req, res) => {
   res.send("Backend is running ✅");
 });
 
-// Generate certificate
+/* ===================== CERTIFICATE ===================== */
 app.post("/generate-certificate", async (req, res) => {
   try {
-    const { name } = req.body;
+    const name = req.body?.name;
 
     if (!name) {
       return res.status(400).json({ error: "Name is required" });
     }
 
-    // ✅ FIXED PATHS (Render safe)
-    const templatePath = path.resolve("template/certificate.pdf");
-    const fontPath = path.resolve("fonts/LibreBaskerville-VariableFont_wght.ttf");
+    // ✅ ALWAYS USE ABSOLUTE SAFE PATH (Render fix)
+    const basePath = __dirname;
 
-    // ✅ DEBUG LOGS (VERY IMPORTANT)
-    console.log("Template path:", templatePath);
-    console.log("Font path:", fontPath);
-    console.log("Template exists:", fs.existsSync(templatePath));
-    console.log("Font exists:", fs.existsSync(fontPath));
+    const templatePath = path.join(basePath, "template", "certificate.pdf");
+    const fontPath = path.join(
+      basePath,
+      "fonts",
+      "LibreBaskerville-VariableFont_wght.ttf"
+    );
 
-    // Load template
+    // 🔍 DEBUG (keep this on Render logs)
+    console.log("Template:", templatePath);
+    console.log("Font:", fontPath);
+
+    if (!fs.existsSync(templatePath)) {
+      throw new Error("Template PDF not found");
+    }
+
+    if (!fs.existsSync(fontPath)) {
+      throw new Error("Font file not found");
+    }
+
+    // Load PDF
     const existingPdfBytes = fs.readFileSync(templatePath);
     const pdfDoc = await PDFDocument.load(existingPdfBytes);
 
@@ -53,7 +67,7 @@ app.post("/generate-certificate", async (req, res) => {
     const fontBytes = fs.readFileSync(fontPath);
     const font = await pdfDoc.embedFont(fontBytes);
 
-    // Layout calculations
+    // Layout
     const lineStartX = width * 0.30;
     const lineEndX = width * 0.78;
     const lineWidth = lineEndX - lineStartX;
@@ -68,26 +82,20 @@ app.post("/generate-certificate", async (req, res) => {
       (textWidth > lineWidth || textHeight > maxHeight) &&
       fontSize > 18
     ) {
-      fontSize -= 1;
+      fontSize--;
       textWidth = font.widthOfTextAtSize(name, fontSize);
       textHeight = font.heightAtSize(fontSize);
     }
 
-    const xOffset = 10;
-    const x = lineStartX + (lineWidth - textWidth) / 2 + xOffset;
+    const x = lineStartX + (lineWidth - textWidth) / 2 + 10;
+    const y = height * 0.455 - textHeight * 0.2;
 
-    const baseY = height * 0.455;
-    const y = baseY - textHeight * 0.2;
-
-    const textColor = rgb(0.11, 0.21, 0.24);
-
-    // Draw name
     page.drawText(name.trim(), {
       x,
       y,
       size: fontSize,
       font,
-      color: textColor,
+      color: rgb(0.11, 0.21, 0.24),
     });
 
     const pdfBytes = await pdfDoc.save();
@@ -98,15 +106,18 @@ app.post("/generate-certificate", async (req, res) => {
       'attachment; filename="certificate.pdf"'
     );
 
-    res.send(Buffer.from(pdfBytes));
-
+    return res.send(Buffer.from(pdfBytes));
   } catch (error) {
-    console.error("🔥 FULL ERROR:", error);
-    res.status(500).json({ error: "Failed to generate certificate" });
+    console.error("🔥 CERTIFICATE ERROR:", error.message || error);
+
+    return res.status(500).json({
+      error: "Failed to generate certificate",
+      debug: error.message,
+    });
   }
 });
 
-// PORT
+/* ===================== START SERVER ===================== */
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
