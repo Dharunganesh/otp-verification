@@ -7,22 +7,21 @@ const cors = require("cors");
 
 const app = express();
 
-//  Middleware
+// Middleware
 app.use(express.json());
 
-// CORS (production-ready setup)
 app.use(
   cors({
     origin: process.env.FRONTEND_URL || "*",
   })
 );
 
-// Health check route
+// Health check
 app.get("/", (req, res) => {
   res.send("Backend is running ✅");
 });
 
-//  Generate certificate API
+// Generate certificate
 app.post("/generate-certificate", async (req, res) => {
   try {
     const { name } = req.body;
@@ -31,24 +30,26 @@ app.post("/generate-certificate", async (req, res) => {
       return res.status(400).json({ error: "Name is required" });
     }
 
-    // Load template PDF
-    const templatePath = path.join(__dirname, "template", "certificate.pdf");
-    const existingPdfBytes = fs.readFileSync(templatePath);
+    // ✅ FIXED PATHS (Render safe)
+    const templatePath = path.resolve("template/certificate.pdf");
+    const fontPath = path.resolve("fonts/LibreBaskerville-VariableFont_wght.ttf");
 
+    // ✅ DEBUG LOGS (VERY IMPORTANT)
+    console.log("Template path:", templatePath);
+    console.log("Font path:", fontPath);
+    console.log("Template exists:", fs.existsSync(templatePath));
+    console.log("Font exists:", fs.existsSync(fontPath));
+
+    // Load template
+    const existingPdfBytes = fs.readFileSync(templatePath);
     const pdfDoc = await PDFDocument.load(existingPdfBytes);
 
-    // Register fontkit
     pdfDoc.registerFontkit(fontkit);
 
     const page = pdfDoc.getPages()[0];
     const { width, height } = page.getSize();
 
     // Load font
-    const fontPath = path.join(
-      __dirname,
-      "fonts",
-      "LibreBaskerville-VariableFont_wght.ttf"
-    );
     const fontBytes = fs.readFileSync(fontPath);
     const font = await pdfDoc.embedFont(fontBytes);
 
@@ -98,13 +99,14 @@ app.post("/generate-certificate", async (req, res) => {
     );
 
     res.send(Buffer.from(pdfBytes));
+
   } catch (error) {
-    console.error("Error generating certificate:", error);
+    console.error("🔥 FULL ERROR:", error);
     res.status(500).json({ error: "Failed to generate certificate" });
   }
 });
 
-//  Deployment-ready PORT
+// PORT
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
