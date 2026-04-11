@@ -165,3 +165,40 @@ def get_user(phone_number: str):
     except Exception as e:
         print("ERROR:", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class Pledge(BaseModel):
+    phone_number: str
+    will_vote: bool
+    wont_accept_bribe: bool
+    
+@app.put("/update-pledge")
+def update_pledge(data: Pledge):
+    try:
+        cursor = conn.cursor()
+
+        query = """
+        UPDATE voters
+        SET 
+            will_vote = %s,
+            wont_accept_bribe = %s
+        WHERE phone_number = %s
+        """
+
+        cursor.execute(query, (
+            data.will_vote,
+            data.wont_accept_bribe,
+            data.phone_number
+        ))
+
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        conn.commit()
+        cursor.close()
+
+        return {"success": True, "message": "Pledge updated"}
+
+    except Exception as e:
+        print("ERROR:", e)
+        raise HTTPException(status_code=500, detail="Database error")
