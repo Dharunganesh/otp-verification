@@ -18,8 +18,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 # 🔹 Database connection (Neon / PostgreSQL)
-conn = psycopg2.connect(os.getenv("DATABASE_URL"))
-
+def get_conn():
+    return psycopg2.connect(os.getenv("DATABASE_URL"))
 
 # 🔹 Request Model
 class User(BaseModel):
@@ -40,6 +40,7 @@ def add_user(user: User):
     try:
         if user.age < 18:
             raise HTTPException(status_code=400, detail="Must be 18+")
+        conn = get_conn()
         cursor = conn.cursor()
         query = """
                 INSERT INTO voters (
@@ -85,6 +86,7 @@ def add_user(user: User):
 @app.get("/get-users")
 def get_users():
     try:
+        conn = get_conn()
         cursor = conn.cursor()
 
         query = """
@@ -126,6 +128,7 @@ def get_users():
 @app.get("/get-user/{phone_number}")
 def get_user(phone_number: str):
     try:
+        conn = get_conn()
         cursor = conn.cursor()
 
         query = """
@@ -176,6 +179,7 @@ class Pledge(BaseModel):
 @app.put("/update-pledge")
 def update_pledge(data: Pledge):
     try:
+        conn = get_conn()
         cursor = conn.cursor()
 
         query = """
