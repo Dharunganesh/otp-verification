@@ -113,6 +113,7 @@ def get_users():
     except Exception as e:
         print("REAL ERROR:", e)
         raise HTTPException(status_code=500, detail=str(e))
+        
 @app.get("/get-user/{phone_number}")
 def get_user(phone_number: str):
     try:
@@ -135,20 +136,21 @@ def get_user(phone_number: str):
         if not row:
             raise HTTPException(status_code=404, detail="User not found")
 
-        "user": {
-                "id": row[0],
-                "name": row[1],
-                "dob": str(row[2]),
-                "age": row[3],   # ✅ NEW
-                "gender": row[4],
-                "block": row[5],
-                "town": row[6],
-                "phone_number": row[7],
-                "is_verified": row[8],
-                "will_vote": row[9],
-                "wont_accept_bribe": row[10],
-                "created_at": str(row[11])
-            }
+        # ✅ FIXED
+        user = {
+            "id": row[0],
+            "name": row[1],
+            "dob": str(row[2]),
+            "age": row[3],
+            "gender": row[4],
+            "block": row[5],
+            "town": row[6],
+            "phone_number": row[7],
+            "is_verified": row[8],
+            "will_vote": row[9],
+            "wont_accept_bribe": row[10],
+            "created_at": str(row[11])
+        }
 
         return {"success": True, "data": user}
 
