@@ -23,7 +23,7 @@ conn = psycopg2.connect(os.getenv("DATABASE_URL"))
 # 🔹 Request Model
 class User(BaseModel):
     name: str
-    dob: str
+    dob: date
     age: int   # ✅ NEW
     gender: str
     block: str
