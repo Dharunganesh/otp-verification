@@ -4,8 +4,20 @@ const path = require("path");
 const { PDFDocument, rgb } = require("pdf-lib");
 const fontkit = require("@pdf-lib/fontkit");
 const cors = require("cors");
+const rateLimit = require("express-rate-limit");
 
 const app = express();
+
+/* ===================== RATE LIMIT ===================== */
+const certificateLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 20, // max 20 requests per IP per minute
+  message: {
+    error: "Too many requests. Please try again later."
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 /* ===================== MIDDLEWARE ===================== */
 app.use(express.json({ limit: "10mb" }));
@@ -24,15 +36,14 @@ app.get("/", (req, res) => {
 });
 
 /* ===================== CERTIFICATE ===================== */
-app.post("/generate-certificate", async (req, res) => {
+app.post("/generate-certificate", certificateLimiter, async (req, res) => {
   try {
     const name = req.body?.name;
 
-    if (!name) {
-      return res.status(400).json({ error: "Name is required" });
+    if (!name || name.length > 50) {
+      return res.status(400).json({ error: "Invalid name" });
     }
 
-    // ✅ ALWAYS USE ABSOLUTE SAFE PATH (Render fix)
     const basePath = __dirname;
 
     const templatePath = path.join(basePath, "template", "certificate.pdf");
@@ -42,7 +53,6 @@ app.post("/generate-certificate", async (req, res) => {
       "LibreBaskerville-VariableFont_wght.ttf"
     );
 
-    // 🔍 DEBUG (keep this on Render logs)
     console.log("Template:", templatePath);
     console.log("Font:", fontPath);
 
@@ -54,7 +64,7 @@ app.post("/generate-certificate", async (req, res) => {
       throw new Error("Font file not found");
     }
 
-    // Load PDF
+    // ❗ Still sync (we’ll optimize later if needed)
     const existingPdfBytes = fs.readFileSync(templatePath);
     const pdfDoc = await PDFDocument.load(existingPdfBytes);
 
@@ -63,11 +73,9 @@ app.post("/generate-certificate", async (req, res) => {
     const page = pdfDoc.getPages()[0];
     const { width, height } = page.getSize();
 
-    // Load font
     const fontBytes = fs.readFileSync(fontPath);
     const font = await pdfDoc.embedFont(fontBytes);
 
-    // Layout
     const lineStartX = width * 0.30;
     const lineEndX = width * 0.78;
     const lineWidth = lineEndX - lineStartX;
