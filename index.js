@@ -1,110 +1,216 @@
+require("regenerator-runtime/runtime");
+
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
-const { PDFDocument, rgb } = require("pdf-lib");
+const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
 const fontkit = require("@pdf-lib/fontkit");
 const cors = require("cors");
-const rateLimit = require("express-rate-limit");
+const { createCanvas, registerFont } = require("canvas");
 
 const app = express();
 
-/* ===================== RATE LIMIT ===================== */
-const certificateLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
-  max: 20, // max 20 requests per IP per minute
-  message: {
-    error: "Too many requests. Please try again later."
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-/* ===================== MIDDLEWARE ===================== */
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true }));
+// ✅ UPDATED CORS CONFIG (only change)
+const allowedOrigins = [
+  "https://www.ranipetpledge.in",
+  process.env.FRONTEND_URL,
+].filter(Boolean);
 
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "*",
-    methods: ["GET", "POST", "OPTIONS"],
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Not allowed by CORS"));
+    },
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type"],
   })
 );
 
-/* ===================== HEALTH ===================== */
+app.use(express.json());
+
+// ✅ FIX: Required for deployment (Render)
+process.env.FONTCONFIG_PATH = "/etc/fonts";
+
+// ✅ FIX: Use resolve + proper registration
+registerFont(
+  path.resolve(__dirname, "fonts", "NotoSansTamil-VariableFont_wdth,wght.ttf"),
+  { family: "TamilFont" }
+);
+
+// Health route
 app.get("/", (req, res) => {
   res.send("Backend is running ✅");
 });
 
-/* ===================== CERTIFICATE ===================== */
-app.post("/generate-certificate", certificateLimiter, async (req, res) => {
+// Detect Tamil
+function containsTamil(text) {
+  return /[\u0B80-\u0BFF]/.test(text);
+}
+
+app.post("/generate-certificate", async (req, res) => {
   try {
-    const name = req.body?.name;
+    const { name } = req.body;
 
-    if (!name || name.length > 50) {
-      return res.status(400).json({ error: "Invalid name" });
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: "Name is required" });
     }
 
-    const basePath = __dirname;
+    const cleanName = name.trim();
 
-    const templatePath = path.join(basePath, "template", "certificate.pdf");
-    const fontPath = path.join(
-      basePath,
-      "fonts",
-      "LibreBaskerville-VariableFont_wght.ttf"
-    );
-
-    console.log("Template:", templatePath);
-    console.log("Font:", fontPath);
-
+    // Load template
+    const templatePath = path.join(__dirname, "template", "certificate.pdf");
     if (!fs.existsSync(templatePath)) {
-      throw new Error("Template PDF not found");
+      return res.status(500).json({ error: "Template file not found" });
     }
 
-    if (!fs.existsSync(fontPath)) {
-      throw new Error("Font file not found");
-    }
-
-    // ❗ Still sync (we’ll optimize later if needed)
     const existingPdfBytes = fs.readFileSync(templatePath);
     const pdfDoc = await PDFDocument.load(existingPdfBytes);
-
     pdfDoc.registerFontkit(fontkit);
 
     const page = pdfDoc.getPages()[0];
     const { width, height } = page.getSize();
 
-    const fontBytes = fs.readFileSync(fontPath);
-    const font = await pdfDoc.embedFont(fontBytes);
+    // English font
+    const engFontPath = path.join(
+      __dirname,
+      "fonts",
+      "LibreBaskerville-VariableFont_wght.ttf"
+    );
+
+    if (!fs.existsSync(engFontPath)) {
+      return res.status(500).json({ error: "English font file not found" });
+    }
+
+    const engFontBytes = fs.readFileSync(engFontPath);
+    const engFont = await pdfDoc.embedFont(engFontBytes);
+
+    // Collector font (Arial style)
+    const collectorFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
     const lineStartX = width * 0.30;
     const lineEndX = width * 0.78;
     const lineWidth = lineEndX - lineStartX;
-
     const maxHeight = height * 0.06;
 
-    let fontSize = 36;
-    let textWidth = font.widthOfTextAtSize(name, fontSize);
-    let textHeight = font.heightAtSize(fontSize);
+    const xOffset = 10;
+    const baseY = height * 0.455;
+    const textColor = rgb(0.11, 0.21, 0.24);
 
-    while (
-      (textWidth > lineWidth || textHeight > maxHeight) &&
-      fontSize > 18
-    ) {
-      fontSize--;
-      textWidth = font.widthOfTextAtSize(name, fontSize);
-      textHeight = font.heightAtSize(fontSize);
-    }
+    const collectorText = "Dr.J. U. Chandrakala, I.A.S.";
+    const collectorFontSize = 18;
 
-    const x = lineStartX + (lineWidth - textWidth) / 2 + 10;
-    const y = height * 0.455 - textHeight * 0.2;
+    const collectorWidth = collectorFont.widthOfTextAtSize(
+      collectorText,
+      collectorFontSize
+    );
 
-    page.drawText(name.trim(), {
-      x,
-      y,
-      size: fontSize,
-      font,
-      color: rgb(0.11, 0.21, 0.24),
+    const collectorX = width * 0.70 - collectorWidth / 2;
+    const collectorY = height * 0.14;
+
+    page.drawText(collectorText, {
+      x: collectorX,
+      y: collectorY,
+      size: collectorFontSize,
+      font: collectorFont,
+      color: rgb(0.2, 0.25, 0.27),
     });
+
+    if (containsTamil(cleanName)) {
+      const measureCanvas = createCanvas(2000, 400);
+      const measureCtx = measureCanvas.getContext("2d");
+
+      let fontSize = 48;
+      let measuredWidth = 0;
+      let measuredHeight = 0;
+
+      while (fontSize > 18) {
+        measureCtx.font = `${fontSize}px "TamilFont"`;
+        const metrics = measureCtx.measureText(cleanName);
+
+        measuredWidth = metrics.width;
+
+        const ascent = metrics.actualBoundingBoxAscent || fontSize * 0.8;
+        const descent = metrics.actualBoundingBoxDescent || fontSize * 0.2;
+        measuredHeight = ascent + descent;
+
+        if (measuredWidth <= lineWidth && measuredHeight <= maxHeight) break;
+
+        fontSize -= 1;
+      }
+
+      const paddingX = 30;
+      const paddingY = 20;
+
+      const canvasWidth = Math.ceil(measuredWidth + paddingX * 2);
+      const canvasHeight = Math.ceil(measuredHeight + paddingY * 2);
+
+      const textCanvas = createCanvas(canvasWidth, canvasHeight);
+      const ctx = textCanvas.getContext("2d");
+
+      ctx.fillStyle = "#1c353c";
+      ctx.font = `${fontSize}px "TamilFont"`;
+
+      const finalMetrics = ctx.measureText(cleanName);
+      const finalAscent =
+        finalMetrics.actualBoundingBoxAscent || fontSize * 0.8;
+      const finalDescent =
+        finalMetrics.actualBoundingBoxDescent || fontSize * 0.2;
+
+      ctx.fillText(cleanName, paddingX, paddingY + finalAscent);
+
+      const pngBuffer = textCanvas.toBuffer("image/png");
+      const pngImage = await pdfDoc.embedPng(pngBuffer);
+
+      let scaleFactor;
+
+      if (finalMetrics.width < lineWidth * 0.6) {
+        scaleFactor = (lineWidth * 0.75) / finalMetrics.width;
+      } else if (finalMetrics.width < lineWidth * 0.9) {
+        scaleFactor = (lineWidth * 0.7) / finalMetrics.width;
+      } else {
+        scaleFactor = (lineWidth * 0.62) / finalMetrics.width;
+      }
+
+      const imageWidth = finalMetrics.width * scaleFactor;
+      const imageHeight = (finalAscent + finalDescent) * scaleFactor;
+
+      const x = lineStartX + (lineWidth - imageWidth) / 2 + xOffset;
+      const y = baseY - imageHeight * 0.5;
+
+      page.drawImage(pngImage, {
+        x,
+        y,
+        width: imageWidth,
+        height: imageHeight,
+      });
+    } else {
+      let fontSize = 36;
+      let textWidth = engFont.widthOfTextAtSize(cleanName, fontSize);
+      let textHeight = engFont.heightAtSize(fontSize);
+
+      while (
+        (textWidth > lineWidth || textHeight > maxHeight) &&
+        fontSize > 18
+      ) {
+        fontSize -= 1;
+        textWidth = engFont.widthOfTextAtSize(cleanName, fontSize);
+        textHeight = engFont.heightAtSize(fontSize);
+      }
+
+      const x = lineStartX + (lineWidth - textWidth) / 2 + xOffset;
+      const y = baseY - textHeight * 0.2;
+
+      page.drawText(cleanName, {
+        x,
+        y,
+        size: fontSize,
+        font: engFont,
+        color: textColor,
+      });
+    }
 
     const pdfBytes = await pdfDoc.save();
 
@@ -114,18 +220,16 @@ app.post("/generate-certificate", certificateLimiter, async (req, res) => {
       'attachment; filename="certificate.pdf"'
     );
 
-    return res.send(Buffer.from(pdfBytes));
+    res.send(Buffer.from(pdfBytes));
   } catch (error) {
-    console.error("🔥 CERTIFICATE ERROR:", error.message || error);
-
-    return res.status(500).json({
+    console.error("Error generating certificate:", error);
+    res.status(500).json({
       error: "Failed to generate certificate",
-      debug: error.message,
+      details: error.message,
     });
   }
 });
 
-/* ===================== START SERVER ===================== */
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
