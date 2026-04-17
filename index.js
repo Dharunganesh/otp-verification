@@ -43,8 +43,8 @@ app.post("/pledge", async (req, res) => {
 
     const stableIdSource = dedupeKey || normalizedPhone;
     const jobId = stableIdSource
-      ? `pledge:${crypto.createHash("sha256").update(stableIdSource).digest("hex")}`
-      : `pledge:${crypto.randomUUID()}`;
+      ? `pledge-${crypto.createHash("sha256").update(stableIdSource).digest("hex")}`
+      : `pledge-${crypto.randomUUID()}`;
 
     await pledgeQueue.add(
       "generate-certificate",
