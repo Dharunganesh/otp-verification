@@ -29,6 +29,69 @@ function containsTamil(text) {
   return /[\u0B80-\u0BFF]/.test(text);
 }
 
+function getTamilFontSize(text, maxWidth, ctx) {
+  const len = text.trim().length;
+  let fontSize;
+
+  if (len <= 3) {
+    fontSize = 60;
+  } else if (len <= 6) {
+    fontSize = 46;
+  } else if (len <= 10) {
+    fontSize = 40;
+  } else if (len <= 16) {
+    fontSize = 34;
+  } else {
+    fontSize = 28;
+  }
+
+  while (fontSize > 20) {
+    ctx.font = `${fontSize}px "TamilFont"`;
+    const metrics = ctx.measureText(text);
+
+    const width = metrics.width;
+    const height =
+      (metrics.actualBoundingBoxAscent || fontSize * 0.8) +
+      (metrics.actualBoundingBoxDescent || fontSize * 0.2);
+
+    if (width <= maxWidth * 0.84 && height <= 30) {
+      break;
+    }
+
+    fontSize -= 2;
+  }
+
+  return fontSize;
+}
+
+function getEnglishFontSize(text, maxWidth, font) {
+  const nameLength = text.trim().length;
+  let fontSize;
+
+  if (nameLength <= 6) {
+    fontSize = 26;
+  } else if (nameLength <= 10) {
+    fontSize = 28;
+  } else if (nameLength <= 16) {
+    fontSize = 30;
+  } else {
+    fontSize = 18;
+  }
+
+  while (fontSize > 18) {
+    const textWidth = font.widthOfTextAtSize(text, fontSize);
+    const textHeight = font.heightAtSize(fontSize);
+
+    if (textWidth <= maxWidth * 0.88 && textHeight <= 60) {
+      break;
+    }
+
+    fontSize -= 1;
+  }
+
+  return fontSize;
+}
+
 async function generateCertificatePdf(name) {
   const cleanName = name.trim();
   const templatePath = path.join(__dirname, "..", "template", "certificate.pdf");
@@ -62,7 +125,7 @@ async function generateCertificatePdf(name) {
   const lineWidth = lineEndX - lineStartX;
   const maxHeight = height * 0.06;
   const xOffset = 10;
-  const baseY = height * 0.455;
+  const baseY = height * 0.46;
   const textColor = rgb(0.11, 0.21, 0.24);
 
   const collectorText = "Dr.J. U. Chandrakala, I.A.S.";
@@ -81,28 +144,32 @@ async function generateCertificatePdf(name) {
   });
 
   if (containsTamil(cleanName)) {
-    const measureCanvas = createCanvas(2000, 400);
+    const measureCanvas = createCanvas(2500, 500);
     const measureCtx = measureCanvas.getContext("2d");
 
-    let fontSize = 48;
-    let measuredWidth = 0;
-    let measuredHeight = 0;
+    let fontSize = getTamilFontSize(cleanName, lineWidth, measureCtx);
+    measureCtx.font = `${fontSize}px "TamilFont"`;
+    let measureMetrics = measureCtx.measureText(cleanName);
+    let measuredWidth = measureMetrics.width;
+    let measuredHeight =
+      (measureMetrics.actualBoundingBoxAscent || fontSize * 0.8) +
+      (measureMetrics.actualBoundingBoxDescent || fontSize * 0.2);
 
-    while (fontSize > 18) {
+    while (
+      (measuredWidth > lineWidth * 0.84 || measuredHeight > maxHeight * 0.72) &&
+      fontSize > 20
+    ) {
+      fontSize -= 2;
       measureCtx.font = `${fontSize}px "TamilFont"`;
-      const metrics = measureCtx.measureText(cleanName);
-      measuredWidth = metrics.width;
-
-      const ascent = metrics.actualBoundingBoxAscent || fontSize * 0.8;
-      const descent = metrics.actualBoundingBoxDescent || fontSize * 0.2;
-      measuredHeight = ascent + descent;
-
-      if (measuredWidth <= lineWidth && measuredHeight <= maxHeight) break;
-      fontSize -= 1;
+      measureMetrics = measureCtx.measureText(cleanName);
+      measuredWidth = measureMetrics.width;
+      measuredHeight =
+        (measureMetrics.actualBoundingBoxAscent || fontSize * 0.8) +
+        (measureMetrics.actualBoundingBoxDescent || fontSize * 0.2);
     }
 
     const paddingX = 30;
-    const paddingY = 20;
+    const paddingY = 8;
     const canvasWidth = Math.ceil(measuredWidth + paddingX * 2);
     const canvasHeight = Math.ceil(measuredHeight + paddingY * 2);
 
@@ -110,6 +177,7 @@ async function generateCertificatePdf(name) {
     const ctx = textCanvas.getContext("2d");
     ctx.fillStyle = "#1c353c";
     ctx.font = `${fontSize}px "TamilFont"`;
+    ctx.textBaseline = "alphabetic";
 
     const finalMetrics = ctx.measureText(cleanName);
     const finalAscent = finalMetrics.actualBoundingBoxAscent || fontSize * 0.8;
@@ -119,26 +187,39 @@ async function generateCertificatePdf(name) {
     const pngBuffer = textCanvas.toBuffer("image/png");
     const pngImage = await pdfDoc.embedPng(pngBuffer);
 
+    const rawWidth = finalMetrics.width;
+    const rawHeight = finalAscent + finalDescent;
+
     let scaleFactor;
-    if (finalMetrics.width < lineWidth * 0.6) {
-      scaleFactor = (lineWidth * 0.75) / finalMetrics.width;
-    } else if (finalMetrics.width < lineWidth * 0.9) {
-      scaleFactor = (lineWidth * 0.7) / finalMetrics.width;
+    let maxAllowedHeight;
+
+    if (cleanName.trim().length <= 3) {
+      scaleFactor = Math.min((lineWidth * 0.92) / rawWidth, 1.18);
+      maxAllowedHeight = maxHeight * 0.92;
     } else {
-      scaleFactor = (lineWidth * 0.62) / finalMetrics.width;
+      scaleFactor = Math.min((lineWidth * 0.82) / rawWidth, 1);
+      maxAllowedHeight = maxHeight * 0.72;
     }
 
-    const imageWidth = finalMetrics.width * scaleFactor;
-    const imageHeight = (finalAscent + finalDescent) * scaleFactor;
+    let imageHeight = rawHeight * scaleFactor;
+    if (imageHeight > maxAllowedHeight) {
+      scaleFactor = maxAllowedHeight / rawHeight;
+      imageHeight = maxAllowedHeight;
+    }
+    const imageWidth = rawWidth * scaleFactor;
+
+    const tamilYOffset = -8;
+    const baselineAdjust = imageHeight * 0.4;
+    const y = baseY - baselineAdjust + tamilYOffset;
 
     page.drawImage(pngImage, {
       x: lineStartX + (lineWidth - imageWidth) / 2 + xOffset,
-      y: baseY - imageHeight * 0.5,
+      y,
       width: imageWidth,
       height: imageHeight,
     });
   } else {
-    let fontSize = 36;
+    let fontSize = getEnglishFontSize(cleanName, lineWidth, engFont);
     let textWidth = engFont.widthOfTextAtSize(cleanName, fontSize);
     let textHeight = engFont.heightAtSize(fontSize);
 
@@ -148,9 +229,13 @@ async function generateCertificatePdf(name) {
       textHeight = engFont.heightAtSize(fontSize);
     }
 
+    const englishYOffset = 2;
+    const baselineAdjust = textHeight * 0.3;
+    const y = baseY - baselineAdjust + englishYOffset;
+
     page.drawText(cleanName, {
       x: lineStartX + (lineWidth - textWidth) / 2 + xOffset,
-      y: baseY - textHeight * 0.2,
+      y,
       size: fontSize,
       font: engFont,
       color: textColor,
