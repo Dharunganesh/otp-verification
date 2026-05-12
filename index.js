@@ -3,8 +3,29 @@ require("regenerator-runtime/runtime");
 const crypto = require("crypto");
 const express = require("express");
 const cors = require("cors");
-const { pledgeQueue } = require("./queue/pledgeQueue");
-const { generateCertificatePdf } = require("./services/certificateService");
+const { pledgeQueue, queueEnabled } = require("./queue/pledgeQueue");
+const { generateCertificatePdf, processPledgeJob } = require("./services/certificateService");
+
+/** Coalesce concurrent /pledge calls with the same jobId when Redis is off (same-process only). */
+const pledgeInflight = new Map();
+
+async function processPledgeInline(jobId, cleanName) {
+  const existing = pledgeInflight.get(jobId);
+  if (existing) {
+    return existing;
+  }
+
+  const promise = processPledgeJob({ name: cleanName }).finally(() => {
+    setTimeout(() => {
+      if (pledgeInflight.get(jobId) === promise) {
+        pledgeInflight.delete(jobId);
+      }
+    }, 15_000);
+  });
+
+  pledgeInflight.set(jobId, promise);
+  return promise;
+}
 
 const app = express();
 
@@ -46,18 +67,29 @@ app.post("/pledge", async (req, res) => {
       ? `pledge-${crypto.createHash("sha256").update(stableIdSource).digest("hex")}`
       : `pledge-${crypto.randomUUID()}`;
 
-    await pledgeQueue.add(
-      "generate-certificate",
-      { name: cleanName },
-      {
-        jobId,
-      }
-    );
+    if (queueEnabled && pledgeQueue) {
+      await pledgeQueue.add(
+        "generate-certificate",
+        { name: cleanName },
+        {
+          jobId,
+        }
+      );
 
+      return res.status(202).json({
+        success: true,
+        message: "Pledge accepted for background processing.",
+        jobId,
+      });
+    }
+
+    const result = await processPledgeInline(jobId, cleanName);
     return res.status(202).json({
       success: true,
-      message: "Pledge accepted for background processing.",
+      message: "Pledge processed (inline; set REDIS_URL + worker for background queue).",
       jobId,
+      publicUrl: result.publicUrl,
+      processedInline: true,
     });
   } catch (error) {
     const duplicateJobError =

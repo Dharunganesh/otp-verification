@@ -1,8 +1,15 @@
 require("regenerator-runtime/runtime");
 
 const { Worker } = require("bullmq");
-const { connection } = require("./queue/connection");
+const { connection, queueEnabled } = require("./queue/connection");
 const { pledgeQueueName } = require("./queue/pledgeQueue");
+
+if (!queueEnabled || !connection) {
+  console.log(
+    "[Worker] REDIS_URL is not set — worker not started (pledges are handled inline by the API)."
+  );
+  process.exit(0);
+}
 const { processPledgeJob } = require("./services/certificateService");
 
 const workerConcurrency = Number(process.env.PLEDGE_WORKER_CONCURRENCY) || 4;
